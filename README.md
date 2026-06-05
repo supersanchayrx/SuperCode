@@ -131,4 +131,4 @@ supercode/
 
 ---
 
-*Built from scratch as a learning project. Inspired by tools like [OpenCode](https://github.com/opencode-ai/opencode), [Aider](https://github.com/paul-gauthier/aider), and [Claude Code](https://claude.ai).*
+*Built from scratch as a learning project. Inspired by tools like [OpenCode](https://github.com/opencode-ai/opencode), [Aider](https://github.com/paul-gauthier/aider), and [Claude Code](https://claude.ai). And amazing video by [Code With Antonio](https://youtu.be/k_D_C3ExypU?si=CA38Y4cNjumyTv4X)*
