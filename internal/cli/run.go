@@ -60,14 +60,23 @@ var runCmd = &cobra.Command{
 			{Role: "user", Content: task},
 		}
 
+		var err2 error
+		var reply string
+
 		fmt.Println("THINKING...")
-		reply, err := client.Chat(messages)
+		if cfg.Stream {
+			reply, err2 = client.ChatStream(messages)
+		} else {
+			reply, err2 = client.Chat(messages)
+		}
+
 		if err != nil {
-			fmt.Printf("ERR: %s\n", err)
+			fmt.Printf("ERR: %s\n", err2)
 			return
 		}
 
-		fmt.Printf("%s\n", reply)
+		//fmt.Printf("%s\n", reply)
+		_ = reply
 	},
 }
 

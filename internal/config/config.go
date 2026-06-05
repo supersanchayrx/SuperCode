@@ -22,7 +22,7 @@ func Load() Config {
 		baseurl = "https://openrouter.ai/api/v1"
 	}
 
-	var streamMode bool = false
+	var streamMode bool = true
 
 	return Config{
 		APIKey:  os.Getenv("SUPERCODE_API_KEY"),

@@ -1,11 +1,13 @@
 package llm
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"supercode/internal/config"
 )
@@ -30,6 +32,7 @@ func NewClient(cfg config.Config) *Client {
 type chatRequest struct {
 	Model    string    `json:"model"`
 	Messages []Message `json:"messages"`
+	Stream   bool      `json:"stream"`
 }
 
 type chatResponse struct {
@@ -42,6 +45,14 @@ type chatResponse struct {
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error"`
+}
+
+type streamChunk struct {
+	Choices []struct {
+		Delta struct {
+			Content string `json:"content"`
+		} `json:"delta"`
+	} `json:"choices"`
 }
 
 // a client receiver function that basically handles the entire LLM talking
@@ -97,4 +108,67 @@ func (c *Client) Chat(messages []Message) (string, error) {
 	}
 
 	return chatResp.Choices[0].Message.Content, nil
+}
+
+func (c *Client) ChatStream(messages []Message) (string, error) {
+	reqBody := chatRequest{
+		Model:    c.cfg.Model,
+		Messages: messages,
+		Stream:   true,
+	}
+
+	jsonData, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", fmt.Errorf("marshal failed: %w", err)
+	}
+	url := c.cfg.BaseURL + "/chat/completions"
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return "", fmt.Errorf("request creation failed: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
+	}
+	// Read the stream line by line
+	scanner := bufio.NewScanner(resp.Body)
+	var fullResponse strings.Builder
+	for scanner.Scan() {
+		line := scanner.Text()
+		// Skip empty lines
+		if line == "" {
+			continue
+		}
+		// SSE lines start with "data: "
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		// Remove the "data: " prefix
+		data := strings.TrimPrefix(line, "data: ")
+		// Check for end of stream
+		if data == "[DONE]" {
+			break
+		}
+		// Parse the JSON chunk
+		var chunk streamChunk
+		err := json.Unmarshal([]byte(data), &chunk)
+		if err != nil {
+			continue // skip malformed chunks
+		}
+		// Extract and print the content
+		if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
+			content := chunk.Choices[0].Delta.Content
+			fmt.Print(content)                // print without newline — tokens flow naturally
+			fullResponse.WriteString(content) // accumulate the full response
+		}
+	}
+	fmt.Println() // final newline after stream ends
+	return fullResponse.String(), nil
 }
