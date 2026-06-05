@@ -2,8 +2,11 @@ package cli
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"supercode/internal/config"
+	"supercode/internal/llm"
 
 	"github.com/spf13/cobra"
 )
@@ -19,8 +22,30 @@ var runCmd = &cobra.Command{
 		task := args[0]
 		cfg := config.Load()
 
+		//converting working dir to absolute directory path
+		absDir, err := filepath.Abs(workDir)
+		if err != nil {
+			fmt.Printf("Invalid directory path \nERR: %s\n", err)
+			return
+		}
+
+		info, err := os.Stat(absDir)
+		if err != nil {
+			fmt.Printf("Path does not exists \nERR: %s\n", err)
+			return
+		}
+
+		if !info.IsDir() {
+			fmt.Printf("This is not a directory \nDir: %s\n", absDir)
+			return
+		}
+
+		workDir = absDir
+
+		fmt.Printf("The working directory was resolved to be : %s\n", workDir)
+
 		if cfg.APIKey == "" {
-			fmt.Println("Put in the Api Key Bruh")
+			fmt.Println("ERR: Put in the Api Key Bruh")
 			return
 		}
 
@@ -28,7 +53,21 @@ var runCmd = &cobra.Command{
 		fmt.Printf("Working Dir: %s\n", workDir)
 		fmt.Printf("Task: %s\n", task)
 		fmt.Println()
-		fmt.Println("agent loop shi") //implement this further
+
+		//Creating the LLM Client
+		client := llm.NewClient(cfg)
+		messages := []llm.Message{
+			{Role: "user", Content: task},
+		}
+
+		fmt.Println("THINKING...")
+		reply, err := client.Chat(messages)
+		if err != nil {
+			fmt.Printf("ERR: %s\n", err)
+			return
+		}
+
+		fmt.Printf("%s\n", reply)
 	},
 }
 

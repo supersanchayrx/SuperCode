@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
+//cobra command is a struct
 var rootCmd = &cobra.Command{
 	Use:   "supercode",
 	Short: "Not so smart coding agent :/",
@@ -14,7 +15,8 @@ var rootCmd = &cobra.Command{
 }
 
 func Execute() {
-	if err := rootCmd.Execute(); err != nil {
+	err := rootCmd.Execute() 
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
