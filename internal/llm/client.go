@@ -13,8 +13,33 @@ import (
 )
 
 type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string     `json:"role"`
+	Content    string     `json:"content"`
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
+}
+
+type ToolCall struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
+}
+
+type ToolDefinition struct {
+	Type     string `json:"type"`
+	Function struct {
+		Name        string                 `json:"name"`
+		Description string                 `json:"description"`
+		Parameters  map[string]interface{} `json:"parameters"`
+	} `json:"function"`
+}
+
+type ChatResponse struct {
+	Content   string
+	ToolCalls []ToolCall
 }
 
 type Client struct {
@@ -30,16 +55,18 @@ func NewClient(cfg config.Config) *Client {
 }
 
 type chatRequest struct {
-	Model    string    `json:"model"`
-	Messages []Message `json:"messages"`
-	Stream   bool      `json:"stream"`
+	Model    string           `json:"model"`
+	Messages []Message        `json:"messages"`
+	Stream   bool             `json:"stream,omitempty"`
+	Tools    []ToolDefinition `json:"tools,omitempty"`
 }
 
 type chatResponse struct {
 	Choices []struct {
 		Message struct {
-			Role    string `json:"role"`
-			Content string `json:"content"`
+			Role      string     `json:"role"`
+			Content   string     `json:"content"`
+			ToolCalls []ToolCall `json:"tool_calls"`
 		} `json:"message"`
 	} `json:"choices"`
 	Error *struct {
