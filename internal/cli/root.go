@@ -10,17 +10,21 @@ import (
 
 var modeFlag string
 
+var Version = "dev"
+
 const modeCommandHelperText string = "starting mode: auto, chat, plan or edit"
 
 var rootCmd = &cobra.Command{
-	Use:           "supercode",
-	Short:         "Not so smart coding agent",
-	RunE:          startSession,
-	SilenceErrors: true,
-	SilenceUsage:  true,
+	Use:               "supercode",
+	Short:             "Not so smart coding agent",
+	RunE:              startSession,
+	PersistentPreRunE: loadConfig,
+	SilenceErrors:     true,
+	SilenceUsage:      true,
 }
 
 func init() {
+	rootCmd.Version = Version
 	rootCmd.PersistentFlags().StringVarP(&modeFlag, "mode", "M", "auto", modeCommandHelperText) //last arg is helper text
 }
 
