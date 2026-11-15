@@ -3,39 +3,38 @@ package llm
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"supercode/internal/config"
 )
 
-type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+func BuildRequest(messages []Message, tools []ToolDef) ([]byte, error) {
+
+	requestBody := ChatRequest{
+		Model:    config.ModelID,
+		Messages: messages,
+		Stream:   false,
+		Tools:    tools,
+	}
+
+	jsonData, err := json.Marshal(requestBody)
+
+	if err != nil {
+		return nil, fmt.Errorf("couldn't build request: %w", err)
+	}
+
+	return jsonData, nil
 }
 
-type ChatRequest struct {
-	Model    string    `json:"model"`
-	Messages []Message `json:"messages"`
-	Stream   bool      `json:"stream"`
-}
-
-type ChatResponse struct {
-	Choices []struct {
-		Message Message `json:"message"`
-	} `json:"choices"`
-}
-
-func BuildChatRequest(systemPrompt, message string) []byte {
+func BuildChatRequest(systemPrompt, message string) ([]byte, error) {
 
 	var messages []Message
 
 	if systemPrompt != "" {
 
 		systemMessage := Message{Role: "system",
-			Content: ""}
-
-		systemMessage.Content = systemPrompt
+			Content: systemPrompt}
 
 		messages = append(messages, systemMessage)
 	}
@@ -47,71 +46,69 @@ func BuildChatRequest(systemPrompt, message string) []byte {
 
 	messages = append(messages, userMessage)
 
-	reqBody := ChatRequest{
-		Model:    config.ModelID,
-		Messages: messages,
-		Stream:   false,
-	}
-
-	jsonData, err := json.Marshal(reqBody)
-
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	return jsonData
+	return BuildRequest(messages, nil)
 }
 
-func HandleRequest(data []byte) (string, error) {
+func HandleRequest(data []byte) (Message, error) {
 
-	sentRequest := SendRequest(data)
+	var parsedMessage Message
+	sentRequest, err := SendRequest(data)
+
+	if err != nil {
+		return parsedMessage, err
+	}
 
 	client := &http.Client{}
 
 	resp, err := client.Do(sentRequest)
 
 	if err != nil {
-		log.Fatal(err)
+		return parsedMessage, fmt.Errorf("request failed: %w", err)
 	}
 
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+
+	if err != nil {
+		return parsedMessage, fmt.Errorf("couldn't read response: %w", err)
+	}
 
 	if resp.StatusCode != http.StatusOK {
-		log.Fatalf("API Error (%d) %s", resp.StatusCode, string(body))
+		return parsedMessage, fmt.Errorf("API error (%d): %s", resp.StatusCode, string(body))
 	}
 
 	return ParseResponse(body)
 }
 
-func SendRequest(data []byte) *http.Request {
+func SendRequest(data []byte) (*http.Request, error) {
 	req, err := http.NewRequest("POST", config.EndPoint, bytes.NewBuffer(data))
 
 	if err != nil {
-		log.Fatal(err)
+		return nil, fmt.Errorf("couldn't create request: %w", err)
 	}
 
 	req.Header.Set("Authorization", "Bearer "+config.SuperCodeApiKey)
 	req.Header.Set("Content-Type", "application/json")
 
-	return req
+	return req, nil
 }
 
-func ParseResponse(responseBody []byte) (string, error) {
+func ParseResponse(responseBody []byte) (Message, error) {
 
-	var finalResponse = ""
-	var chatReponse ChatResponse
+	var finalResponse Message
+	var chatResponse ChatResponse
 
-	err := json.Unmarshal(responseBody, &chatReponse)
+	err := json.Unmarshal(responseBody, &chatResponse)
 
 	if err != nil {
-		log.Fatal(err)
+		return finalResponse, fmt.Errorf("couldn't parse response: %w", err)
 	}
 
-	if len(chatReponse.Choices) > 0 {
-		finalResponse = chatReponse.Choices[0].Message.Content
+	if len(chatResponse.Choices) == 0 {
+		return finalResponse, fmt.Errorf("no choices in response")
 	}
 
-	return finalResponse, err
+	finalResponse = chatResponse.Choices[0].Message
+	return finalResponse, nil
 }

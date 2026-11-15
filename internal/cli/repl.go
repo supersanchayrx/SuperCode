@@ -6,68 +6,41 @@ import (
 	"os"
 	"strings"
 	"supercode/internal/agent"
-
-	"github.com/spf13/cobra"
 )
 
-var modeFlag string
-
-var chatCmd = &cobra.Command{
-	Use:   "chat",
-	Short: "Used to enter chat mode",
-	RunE:  chat,
-}
-
-func init() {
-	chatCmd.Flags().StringVarP(&modeFlag, "mode", "M", "auto", "auto,edit,plan,chat")
-	rootCmd.AddCommand(chatCmd)
-}
-
-func chat(cmd *cobra.Command, args []string) error {
-	mode, err := agent.ParseMode(modeFlag)
-	if err != nil {
-		return err
-	}
-	a := agent.New(mode)
-
-	switch a.Mode {
-	case agent.ModeChat:
-		chatMode(a)
-
-	default:
-		chatMode(a)
-	}
-
-	return nil
-
-}
-
-func chatMode(agent *agent.Agent) {
+func runRepl(a *agent.Agent) {
 	scanner := bufio.NewScanner(os.Stdin)
 
-	fmt.Println("Enter a query. Switch modes using the /mode command")
+	fmt.Println("Type a message, or /help for commands")
 
+	//actual repl loop
 	for {
-		fmt.Printf("\n> ")
+		fmt.Printf("\n[%s]> ", a.Mode)
 		if !scanner.Scan() {
 			break
-		}
+		} //token to show on left
 
-		input := strings.TrimSpace(scanner.Text())
+		input := strings.TrimSpace(scanner.Text()) // take input
+
+		//if input is empty skip
 		if input == "" {
 			continue
 		}
-		if input == "exit" || input == "quit" {
-			break
+
+		if strings.HasPrefix(input, "/") {
+			if handleCommand(a, input) {
+				break
+			}
+			continue
 		}
 
-		err := agent.Chat(input)
+		err := a.Handle(input) //every input gets
 
 		if err != nil {
-			fmt.Println("Error : ", err)
+			fmt.Println("Error:", err)
 			continue
 		}
 	}
 
-	fmt.Println("Exiting Chat mode ... BYEEE!!!")
+	fmt.Println("BYEEE!!!")
 }

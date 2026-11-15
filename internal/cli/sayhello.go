@@ -34,12 +34,19 @@ func sayHelloFromModel() {
 	}
 
 	finalPrompt := promptText.String()
-	answer, err := llm.HandleRequest(llm.BuildChatRequest("", finalPrompt))
+	request, err := llm.BuildChatRequest("", finalPrompt)
 
 	if err != nil {
-		fmt.Println("Error : ", err)
+		fmt.Println("Error:", err)
 		return
 	}
 
-	fmt.Println(answer)
+	answer, err := llm.HandleRequest(request)
+
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+
+	fmt.Println(answer.Content)
 }

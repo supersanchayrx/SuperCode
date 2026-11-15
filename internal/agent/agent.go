@@ -6,8 +6,14 @@ type Agent struct {
 	Mode Mode
 }
 
-func New(mode Mode) *Agent {
-	return &Agent{Mode: mode}
+func New(mode string) (*Agent, error) {
+	startMode, err := ParseMode(mode)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &Agent{Mode: startMode}, nil
 }
 
 func (a *Agent) Handle(input string) error {

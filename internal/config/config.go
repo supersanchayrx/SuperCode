@@ -1,7 +1,8 @@
 package config
 
 import (
-	"log"
+	"errors"
+	"fmt"
 	"os"
 
 	"github.com/joho/godotenv"
@@ -13,20 +14,19 @@ const ModelID = "nvidia/nemotron-3.5-lightning:free"
 const EndPoint = "https://openrouter.ai/api/v1/chat/completions"
 const envFilePath = "internal/config/.env"
 
-func LoadKeys() (error, string) {
+func LoadKeys() (string, error) {
 
 	err := godotenv.Load(envFilePath)
 
 	if err != nil {
-		log.Fatal("Error Reading keys check the .env file")
-		return err, SuperCodeApiKey
+		return "", fmt.Errorf("error reading keys, check the .env file: %w", err)
 	}
 
 	SuperCodeApiKey = os.Getenv("SUPERCODE_API_KEY")
 
 	if SuperCodeApiKey == "" {
-		log.Fatal("The Key is empty enter a valid key")
+		return "", errors.New("the key is empty, set SUPERCODE_API_KEY in the .env file")
 	}
 
-	return err, SuperCodeApiKey
+	return SuperCodeApiKey, nil
 }

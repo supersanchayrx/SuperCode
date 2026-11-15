@@ -21,33 +21,36 @@ This roadmap is intentionally minimal and built for an intermediate-level develo
 ### Done
 - [x] **Phase 0 (project setup):** module, folder structure, API key loaded from `.env`.
 - [x] **Phase 1 (LLM client):** the `llm` package sends a system prompt + user message to OpenRouter and returns the reply text.
+- [x] **The project builds again** (`go build ./...` passes).
 - [x] **Cobra CLI:**
-  - `rootCmd` in `cli/root.go`;
-  - a `sayhello` command with a `--name` / `-n` flag;
-  - a `chat` command with a `--mode` / `-M` flag.
+  - `rootCmd` in `cli/root.go`, with `RunE: startSession`, so plain `supercode` opens a session;
+  - a persistent `--mode` / `-M` flag on root, so it works on `supercode` and `supercode chat`;
+  - `chatCmd` in `cli/chatCli.go`, an alias that also runs `startSession`;
+  - a `sayhello` command with a `--name` / `-n` flag.
+- [x] **Session start and loop are split:**
+  - `startSession` (`root.go`): create the agent from `modeFlag` and run the loop. The useless mode `switch` is gone.
+  - `runRepl` (`repl.go`): the loop. Lines starting with `/` go to `handleCommand`; everything else goes to `a.Handle(input)`. It shows the mode in the prompt (`[auto]>`) and prints errors without exiting. It no longer imports `llm` or `cobra`.
+- [x] **Slash commands started:** `cli/commands.go` has `handleCommand` with `/help`, `/exit`, `/quit`, `/mode` and an "Unknown command" fallback. (Two bugs left, see Loose ends.)
+- [x] **Mode logic moved into `agent`:** `SetMode(name string) error` in `mode.go`; `New(name string) (*Agent, error)` parses the mode itself, so `cli` no longer calls `ParseMode`; `ParseMode` lowercases its input, so `PLAN` works too.
 - [x] **Agent package skeleton:**
-  - `mode.go`: the `Mode` type (`auto`, `chat`, `plan`, `edit`) and `ParseMode`.
+  - `mode.go`: the `Mode` type (`auto`, `chat`, `plan`, `edit`), `ParseMode` and `SetMode`.
   - `router.go`: `classify(input)` asks the model whether a message is chat, plan or edit.
   - `agent.go`: the `Agent` struct and `Handle(input)`, which picks a mode for each message (using a local copy, so `auto` stays on) and calls the matching handler.
   - `chat.go`, `plan.go`, `edit.go`: handler methods `Chat`, `Plan`, `Edit`. `Plan` and `Edit` print "Not built yet".
-- [x] **The REPL gets the agent:** `cli/repl.go` creates the `Agent` and passes it into the loop. The loop no longer imports `llm`.
+- [x] **`llm` cleaned up for now:** no `cli` import (the import cycle is gone), `Stream: false`, and `HandleRequest` / `ParseResponse` return `(string, error)`. All callers are updated.
+- [x] **Prompts live in `agent/prompts.go`** (`routerPrompt`, `chatPrompt`).
+- [x] **Errors don't kill the session:** no `log.Fatal` left. `llm` and `config` return errors, `Chat` passes them up, and `runRepl` prints `Error: …` and keeps going. A missing `.env` exits cleanly with a message from `main.go`.
 - [x] **Chat prompt rewritten:** it's now `chatPrompt` (a `const`), written for terminal output, and names only `/mode plan` and `/mode edit`.
+- [x] **First restructure committed** (`d9985ba restructuring - 1`).
 - [x] **`.env` is in `.gitignore`.**
 
 ### Loose ends in the current code
-- **The project doesn't build right now.** Two causes:
-  - `llm/llmChat.go` imports `cli`, which creates an import cycle (`cli → agent → llm → cli`). This is part of the half-done streaming work. Step 1 removes it; streaming comes back properly in Step 6.
-  - `HandleRequest` now returns only `error`, but `agent/chat.go`, `agent/router.go` and `cli/sayhello.go` still expect `(error, string)`. Once the cycle is fixed, these will be the next errors.
-- **The REPL calls `agent.Chat` instead of `agent.Handle`,** so the router and auto mode are skipped and every message goes to chat.
-- **The mode `switch` in `chat()` (`cli/repl.go`) does nothing useful.** Both cases call `chatMode()`. The mode decision belongs in `agent.Handle`.
-- **`/mode` is advertised but not implemented.** The welcome text tells users to use it, but a line starting with `/` is sent to the model like any other message.
-- **`agent/chat.go` swallows errors.** On failure it prints nothing and returns `nil`, so the user sees an empty reply.
-- **`log.Fatal` in `llm/llmChat.go` and `config/config.go`** ends the whole program on any network or API error (rate limits on the free model are common). The error fallbacks in `classify` and the REPL never get to run.
+- **Uncommitted work:** the Step 1–2 changes aren't committed yet. `cli/chatCli.go` and `cli/commands.go` are untracked.
 - **`main.go`** prints "Hello Reading api key --" before every command, including `--help`, and loads keys before Cobra runs.
 - **The `.env` path is relative** (`internal/config/.env`), so `supercode` only works when run from the project folder.
-- **`go.mod`** still marks godotenv as `// indirect`.
-- **The old `internal/tools/` files show as deleted** in git (`tool.go`, `read_file.go`, `write_file.go`, `list_files.go`, `run_command.go`). They're needed again in Milestone B.
-- **Most new files are untracked:** all of `agent/`, `cli/repl.go`, `cli/sayhello.go`, `llm/llmChat.go`. Nothing protects them until they're committed.
+- **`go.mod`** still marks every dependency as `// indirect`.
+- **`cli/output.go`** (the queue and `streamText`) is unused. It gets deleted in Step 6.
+- **`internal/tools/` and the old `llm/client.go` were deleted in commit `d9985ba`.** Milestone B rebuilds tools from scratch. The old `ChatStream` in `1ec8f52` is still a useful reference for Step 6.
 
 ---
 
@@ -57,80 +60,94 @@ Work top to bottom. Each step ends with a **Check** you can run, so you always k
 
 | Order | Step | Why it comes here |
 |-------|------|-------------------|
-| 1 | Make it build, then commit | Nothing else can be tested until it compiles, and most files are untracked. |
-| 2 | Restructure the CLI | The session shape everything else plugs into. |
-| 3 | Tidy the agent | Small; makes chat mode answer properly through `Handle`. |
-| 4 | Errors that don't kill the session | Needed before streaming, where a mid-answer failure would kill the REPL. |
-| 5 | Housekeeping, then commit | Milestone A without streaming is done here. |
-| 6 | Streaming chat replies | Nice-to-have on top of a working session. |
-| 7 | Milestone B: tool calling | The big one. |
+| 1 | ~~Make it build, then commit~~ ✅ | Nothing else can be tested until it compiles. |
+| 2 | ~~Restructure the CLI~~ ✅ | The session shape everything else plugs into. |
+| 3 | ~~Tidy the agent~~ ✅ | Small; makes chat mode answer properly through `Handle`. |
+| 4 | ~~Errors that don't kill the session~~ ✅ | Needed before streaming, where a mid-answer failure would kill the REPL. |
+| 5 | Housekeeping, then commit (shelved for later) | Small cleanups; nothing else depends on them. |
+| 6 | Streaming chat replies (after Milestone B) | Tool calls arrive in pieces when streaming, so build tools without streaming first. |
+| 7 | Milestone B: tool calling ← **you are here** (B4) | The big one. |
 | 8 | Milestone C: plan and edit modes | Built on the tools from B. |
 
 ### Milestone A: a working session with modes (do this now)
 
 **Done when:**
-- `supercode` on its own opens a session.
-- `supercode chat` does the same.
-- `supercode --mode plan` starts in plan mode.
-- `/mode` switches modes mid-session.
-- Chat mode answers through the agent.
-- An API error prints a message and the session keeps going.
+- [x] `supercode` on its own opens a session.
+- [x] `supercode chat` does the same.
+- [x] `supercode --mode plan` starts in plan mode.
+- [x] `/mode` switches modes mid-session.
+- [x] Chat mode answers through the agent.
+- [x] An API error prints a message and the session keeps going.
 
-#### Step 1. Make it build, then commit
+#### Step 1. Make it build, then commit ✅
 Goal: the smallest changes that get `go build ./...` passing again. Streaming is put on hold until Step 6.
-- [ ] **Remove the `cli` import from `llm/llmChat.go`** and the `cli.AddToOutputQueue()` call. `cli → agent → llm → cli` is an import cycle, and Go won't build it.
-- [ ] **Set `Stream: false` for now** in `BuildChatRequest`, and make `HandleRequest` read the body and call `ParseResponse` again, so it returns the reply text.
-- [ ] **Settle on one signature for `HandleRequest`** and update every caller (`agent/chat.go`, `agent/router.go`, `cli/sayhello.go`). The Go convention is `(string, error)`, and now is the cheapest time to switch, since you're touching every caller anyway. Do the same for `ParseResponse` and `config.LoadKeys`.
-- [ ] **Leave `cli/output.go` alone, or delete it.** It's unused until Step 6, where it gets deleted anyway (see below).
-- [ ] **Commit.** Most files are untracked, so nothing protects them until they're committed. Decide about `internal/tools` first: run `git checkout HEAD -- internal/tools` to bring it back (recommended, Milestone B needs it), or commit the deletion on purpose.
+- [x] **Remove the `cli` import from `llm/llmChat.go`** and the `cli.AddToOutputQueue()` call. `cli → agent → llm → cli` is an import cycle, and Go won't build it.
+- [x] **Set `Stream: false` for now** in `BuildChatRequest`, and make `HandleRequest` read the body and call `ParseResponse` again, so it returns the reply text.
+- [x] **Settle on one signature for `HandleRequest`:** `(string, error)`, with every caller updated (`agent/chat.go`, `agent/router.go`, `cli/sayhello.go`). Same for `ParseResponse`. (`config.LoadKeys` moves to Step 4.)
+- [x] **Leave `cli/output.go` alone.** It's unused until Step 6, where it gets deleted.
+- [ ] **Commit the current changes**, including the untracked `cli/chatCli.go`.
 
-**Check:** `go build ./...` passes, and `supercode chat` answers a question.
+**Check:** `go build ./...` passes, and `supercode chat` answers a question. ✅
 
 #### Step 2. Restructure the CLI
-- [ ] **`cli/root.go`** (partly done):
-  - [x] Give `rootCmd` a `RunE` that starts the REPL, so plain `supercode` opens a session like `claude` does. (`RunE: chat` is in place.)
-  - [ ] Move the `--mode` / `-M` flag here as a **persistent flag**, so it works on both `supercode` and `supercode chat`. Right now it's registered only on `chatCmd`, so `supercode --mode plan` fails with "unknown flag".
-- [x] **Keep `chat` as an alias:** a subcommand whose `RunE` calls the same start-session function as root. (Both use `chat()`.) Cobra's `Aliases` field only gives a subcommand extra names, so `chat` stays its own small command.
-- [ ] **`cli/repl.go`:** keep only the session loop (partly done).
-  - [ ] Move `chatCmd` to its own file or `root.go`, and remove the mode `switch` from this file.
-  - [x] The start function: `ParseMode(modeFlag)` → `agent.New(mode)` → run the loop with the agent.
-  - [x] The loop takes the agent as a parameter, and on error prints `Error: …` and keeps looping.
-  - [ ] The loop calls `a.Handle(input)` instead of `a.Chat(input)`.
-  - [x] Remove the `llm` import from the REPL. The CLI should never call `llm` or `tools` directly. (`cli/sayhello.go` still imports `llm`; that's fine while it's a test command, or route it through the agent later.)
-  - [ ] Show the current mode in the prompt, e.g. `[auto] >`, by reading `a.Mode` on every loop.
-  - [ ] Replace plain `exit` / `quit` with `/exit`. Update the welcome line to mention `/help`.
-- [ ] **New `cli/commands.go`:** `handleCommand(a, input) bool`, which returns `true` when the session should end. The loop calls it for any line starting with `/`, then `continue`s, so commands never reach the model.
-  - `/mode <auto|chat|plan|edit>`: run `ParseMode` on the argument; on success set `a.Mode`, on error print it.
-  - `/mode` on its own: print the current mode and the usage line.
-  - `/chat`, `/plan`, `/edit`, `/auto`: shortcuts for `/mode <name>`. These match what the chat prompt already tells users.
-  - `/help`: list all commands.
-  - `/exit`, `/quit`: end the session.
-  - Anything else: "Unknown command, type /help".
+- [x] **`cli/root.go`:**
+  - [x] `rootCmd` has `RunE: startSession`, so plain `supercode` opens a session like `claude` does.
+  - [x] The `--mode` / `-M` flag is a **persistent flag** on root, so it works on both `supercode` and `supercode chat`.
+  - [x] `startSession`: `agent.New(modeFlag)` → `runRepl(a)`. No mode `switch`.
+  - [x] Make `New` return `(*Agent, error)` and have `startSession` return that error, so a bad `--mode` stops the program.
+  - [x] Print that error once: the `fmt.Println` in `startSession` is gone, and `SilenceErrors: true` is set, so only `Execute()` prints it.
+  - [x] Add `SilenceUsage: true` to `rootCmd`, so Cobra doesn't dump the usage text for an error that isn't a typing mistake.
+- [x] **`chat` alias in `cli/chatCli.go`:** a subcommand with `RunE: startSession`. Cobra's `Aliases` field only gives a subcommand extra names, so `chat` stays its own small command.
+- [ ] **`cli/repl.go`: only the session loop** (mostly done).
+  - [x] `runRepl(a *agent.Agent)` takes the agent and doesn't import `cobra` or `llm`. The CLI should never call `llm` or `tools` directly. (`cli/sayhello.go` still imports `llm`; that's fine while it's a test command.)
+  - [x] The loop calls `a.Handle(input)`, and on error prints `Error: …` and keeps looping.
+  - [x] The prompt shows the current mode (`[auto]>`), read from `a.Mode` on every loop.
+  - [x] Replace plain `exit` / `quit` with `/exit` (handled in `commands.go`). Update the welcome line to mention `/help`.
+  - [x] Tidy the `"label: text"` spacing in all messages.
+  - [ ] Optional: move the `//token to show on left` comment up to the prompt line; finish or delete `//every input gets`.
+- [ ] **`cli/commands.go`:** `handleCommand(a, input) bool`, which returns `true` when the session should end (mostly done).
+  - [x] Split with `strings.Fields`, lowercase the command, `switch` on it.
+  - [x] `/help`, `/exit`, `/quit`, and the "Unknown command" fallback.
+  - [x] **`/mode`:** if `len(args) == 0`, print the current mode and usage; otherwise call `a.SetMode(args[0])`.
+  - [x] **Check `SetMode`'s error in `/mode <name>`.**
+  - [x] Print the error itself there: `Can't switch mode: unknown mode "banana" (use auto, chat, plan or edit)`.
+  - [x] **`/chat`, `/plan`, `/edit`, `/auto`:** call `a.SetMode(strings.TrimPrefix(cmd, "/"))`, not `args[0]`. `args` is empty here, which is the panic.
+  - [x] **Error print:** `%e` is a float verb, so an error prints as `%!e(...)`. Use `fmt.Println("Failed to change mode:", err)`, or `%v` with a `\n`.
+  - [x] **Delete the lowercase loop (lines 22–24).** It does nothing: `field` is a copy of each element, so changing it doesn't change `fields`. Lowercase inside `ParseMode` instead (`Mode(strings.ToLower(s))`). Then `/mode PLAN` and `--mode PLAN` both work, and the rule lives in `agent`.
+  - [ ] Remove the extra `{ }` around the `/mode` case body. A `case` is already its own block.
+- [ ] **Optional: make the mode private** so `SetMode` is the only way to change it: field `Mode` → `mode`, add `func (a *Agent) Mode() Mode`, and use `a.Mode()` in the prompt and in `commands.go`.
 
 **Check:**
-- `supercode`, `supercode chat` and `supercode --mode plan` all open a session, and the prompt shows the right mode.
-- In auto mode, a question prints `(auto → chat)` and gets an answer.
-- `/mode edit` changes the prompt to `[edit] >`, and a message prints "Not built yet".
-- `/help`, `/exit` and an unknown `/foo` all behave as above.
+- [x] `supercode`, `supercode chat` and `supercode --mode plan` all open a session, and the prompt shows the right mode.
+- [x] In auto mode, a question prints `(auto → chat)` and gets an answer.
+- [x] `supercode --mode banana` prints the `ParseMode` error once and doesn't start a session.
+- [x] `/mode edit` changes the prompt to `[edit]>`, and a message prints "Not built yet".
+- [x] `/plan` switches to plan mode without crashing.
+- [x] `/mode banana` prints the error, and the mode doesn't change.
+- [x] `/help`, `/exit` and an unknown `/foo` behave as described.
 
-#### Step 3. Tidy the agent
-- [ ] **New `agent/prompts.go`:** move every system prompt here as a `const`.
+#### Step 3. Tidy the agent ✅
+- [x] **New `agent/prompts.go`:** move every system prompt here as a `const`.
   - `routerPrompt` from `router.go`.
   - `chatPrompt` from `chat.go` (already renamed and made a `const`).
-  - Placeholder `planPrompt` and `editPrompt` for later.
+  - Placeholder `planPrompt` and `editPrompt`: add them when plan and edit modes are built (Milestone C).
 - [x] **Make every prompt name only commands that really exist.** The chat prompt now says `/mode plan` and `/mode edit`, which exist after Step 2.
-- [ ] **`agent/chat.go`:** if `HandleRequest` returns an error, return it; otherwise print the answer and return `nil`.
+- [x] **`agent/chat.go`:** if `HandleRequest` returns an error, return it; otherwise print the answer and return `nil`.
 
-**Check:** with the API key temporarily wrong in `.env`, a chat message prints `Error: …` instead of an empty line. (Until Step 4, `log.Fatal` may still end the program here. That's the next step's job.)
+**Check:** with the API key temporarily wrong in `.env`, a chat message prints `Error: …` instead of an empty line. ✅ (`Error: API error (401): …`)
 
-#### Step 4. Errors that don't kill the session
-- [ ] **`llm/llmChat.go`:** replace every `log.Fatal` / `log.Fatalf` with returning an error.
+#### Step 4. Errors that don't kill the session ✅
+- [x] **`llm/llmChat.go`:** replace every `log.Fatal` / `log.Fatalf` with returning an error.
   - `SendRequest` returns `(*http.Request, error)`.
   - The non-200 status check returns `fmt.Errorf("API error (%d): %s", ...)`.
   - `ParseResponse` returns its `Unmarshal` error.
-- [ ] **`config.LoadKeys`:** return errors instead of calling `log.Fatal`.
+  - `BuildChatRequest` returns `([]byte, error)`, and its three callers check it.
+  - `io.ReadAll`'s error is checked too.
+- [x] **`config.LoadKeys`:** return errors instead of calling `log.Fatal`, and flip it to `(string, error)` like the rest.
 
-**Check:** with a wrong API key, or with Wi-Fi off, a message prints an error and the `>` prompt comes back.
+- [x] **`main.go`** checks `LoadKeys`'s error, prints it, and exits with code 1. (It moves to `PersistentPreRunE` in Step 5.)
+
+**Check:** with a wrong API key, or with Wi-Fi off, a message prints an error and the `>` prompt comes back. ✅
 
 #### Step 5. Housekeeping, then commit
 - [ ] **`main.go`:** remove the greeting print. Move `config.LoadKeys()` into `rootCmd`'s `PersistentPreRunE`, so it runs before every command, can return an error, and isn't needed for `--help`.
@@ -181,32 +198,155 @@ The reply should appear as the model writes it, not all at once at the end.
 **Callers**
 - [ ] **`agent/chat.go`:** call the streaming function with the output from the CLI. Don't print the returned string again, because the user has already seen it.
 
-**Reference:** a working version of this loop exists in the last commit, as `ChatStream` in the old `client.go`. View it with `git show HEAD:internal/llm/client.go`. It has the scanner loop, the `data: ` handling, the `[DONE]` check and the `strings.Builder`. The main change is to replace its direct `fmt.Print` with the callback or writer.
+**Reference:** a working version of this loop exists in commit `1ec8f52`, as `ChatStream` in the old `client.go`. View it with `git show 1ec8f52:internal/llm/client.go` (it was deleted in `d9985ba`, so it's no longer in `HEAD`). It has the scanner loop, the `data: ` handling, the `[DONE]` check and the `strings.Builder`. The main change is to replace its direct `fmt.Print` with the callback or writer.
 
 **Check:** a long chat answer appears word by word, auto mode still prints `(auto → chat)` without the router's answer leaking to the screen, and `go build ./...` passes. Commit.
 
 ### Milestone B: tool calling (Phases 2–4) — step 7
-- [ ] **Restore and review `internal/tools`:** the `Tool` struct, `Registry`, `read_file`, `list_files`, `write_file`, `run_command`.
-- [ ] **Check that the chosen OpenRouter model supports tool calling.** Many free models don't. Switch models if needed.
-- [ ] **Extend the `llm` types:**
-  - send a `tools` list with each request,
-  - parse `tool_calls` from the response,
-  - support `role: "tool"` messages with a `tool_call_id`.
-- [ ] **Change `BuildChatRequest`** to take a `[]Message` instead of two strings, so a conversation can grow inside one turn.
-- [ ] **New `agent/loop.go`:** the agent loop, used by every mode handler.
-  1. Send the messages and tools.
-  2. If the reply has tool calls: run them, append the results, go back to step 1.
-  3. If the reply is plain text: show it and stop.
-  
-  Add a maximum number of iterations.
-- [ ] **Give each mode its own tool set:**
-  - chat: read-only (`read_file`, `list_files`)
-  - plan: read-only, plus writing `PLAN.md`
-  - edit: read, write and `run_command`
-- [ ] **Let the agent change its own mode** (e.g. a `switch_mode` tool, or a handler deciding a plan is needed first) by setting `a.Mode`. The REPL reads `a.Mode` for the prompt, so it stays in sync automatically.
-- [ ] **Stop the agent printing directly.** Pass it an output destination (`io.Writer`) or callbacks from the CLI, so the CLI controls how tool progress ("reading main.go…") and answers look.
-- [ ] **Ask the user before** writing files or running commands. The question goes through the CLI, not `fmt.Scanln` inside a tool.
-- [ ] **Feed tool errors back to the model** as tool results instead of ending the turn.
+
+Built from scratch (not restored from `1ec8f52`). Streaming stays off (`Stream: false`) for the whole milestone.
+
+**Done when:**
+- [ ] In chat mode, "what does main.go do?" makes the model call `read_file`, and it answers about the real file.
+- [ ] A tool error (e.g. a missing file) goes back to the model, and the session keeps going.
+- [ ] "Create hello.txt with hi in it" asks before writing, writes on yes, and tells the model on no.
+
+#### How tool calling works
+1. You send the messages plus a list of **tool definitions** (name, description, JSON schema for the arguments).
+2. Instead of text, the model can reply with **`tool_calls`**: "call `read_file` with `{"path":"main.go"}`".
+3. **You** run the tool. The model never touches your machine.
+4. You append the result as a `role: "tool"` message and send everything again.
+5. Repeat until the model replies with plain text. That's the **agent loop**.
+
+```json
+// request: what you add
+"tools": [{ "type": "function",
+  "function": { "name": "read_file", "description": "Read a file in the project",
+    "parameters": { "type": "object", "properties": { "path": { "type": "string" } }, "required": ["path"] } } }]
+
+// response: choices[0]
+"finish_reason": "tool_calls",
+"message": { "role": "assistant", "content": null,
+  "tool_calls": [{ "id": "call_abc", "type": "function",
+    "function": { "name": "read_file", "arguments": "{\"path\":\"main.go\"}" } }] }
+
+// appended before sending again
+{ "role": "assistant", "content": null, "tool_calls": [ ...exactly as received... ] }
+{ "role": "tool", "tool_call_id": "call_abc", "content": "package main\n..." }
+```
+
+The API is stateless: every request resends the whole conversation. That's normal (every coding agent does it); see "Keeping context small" below.
+
+#### Step B1. Check the model supports tools ✅
+- [x] `nvidia/nemotron-3.5-lightning:free` is listed at `https://openrouter.ai/api/v1/models?supported_parameters=tools`.
+- [ ] If it handles tools badly in practice (made-up arguments, ignores tools), try `nvidia/nemotron-3-ultra-550b-a55b:free`.
+
+#### Step B2. Extend the `llm` types ✅
+Only types; no behaviour changes. All types now live in `llm/types.go`.
+- [x] **`FunctionCall`** (named): `Name`, `Arguments` (both `string`).
+  - `Arguments` is JSON **inside a string** (`"{\"path\":\"main.go\"}"`), so it must be a `string`. Each tool decodes it a second time (B4).
+- [x] **`ToolCall`**: `ID`, `Type`, `Function FunctionCall`.
+- [x] **`FunctionDef`** (named): `Name`, `Description` (`string`), `Parameters json.RawMessage`.
+- [x] **`ToolDef`**: `Type string`, `Function FunctionDef`.
+- [x] **`Message`**: add `ToolCalls []ToolCall` (`json:"tool_calls,omitempty"`) and `ToolCallID string` (`json:"tool_call_id,omitempty"`). No `omitempty` on `Content`.
+- [x] **`ChatRequest`**: add `Tools []ToolDef` (`json:"tools,omitempty"`).
+- [x] **`ChatResponse`**: add `FinishReason string` (`json:"finish_reason"`) next to `Message` in the choice.
+- [ ] Optional: rename the `Choices` type to `Choice` (one element of `[]Choice`).
+
+Things to remember:
+- Tags need quotes: `json:"id"`, not `json:id`. `go vet ./...` catches it.
+- Only exported (capitalized) fields are encoded or decoded; lowercase ones are silently skipped.
+- `omitempty` drops zero values (`""`, `0`, `false`, `nil` slices/maps/pointers), so requests without tools stay exactly as they are today.
+- `"content": null` decodes into a `string` as `""` without an error. If a provider later rejects `""` alongside tool calls when you send it back, switch `Content` to `*string`.
+
+**Check:** `go build ./...` and `go vet ./...` pass, and `supercode chat` answers "hi" exactly as before.
+
+#### Step B3. Requests built from messages ✅
+- [x] **`BuildRequest(messages []Message, tools []ToolDef)`.** The caller owns the slice, so the conversation can grow inside one turn.
+- [x] **`ParseResponse` and `HandleRequest` return the whole `Message`**, not just `Content`, so the loop can see `ToolCalls`. Callers use `answer.Content`.
+- [x] **Return an error when `Choices` is empty**, instead of a blank reply.
+  - [ ] Drop the `%w` from that error: `err` is `nil` there, so it prints `%!w(<nil>)`.
+- [x] **`BuildChatRequest` is a small helper for the two-strings call** that ends with `return BuildRequest(messages, nil)`.
+
+**Check:** `go build ./...` passes, and chat still answers.
+
+#### Step B4. The `tools` package, one tool at a time ← you are here
+Files: `tools.go` (Tool + Registry), `path.go` (`safePath`), `readfile.go`, `listfiles.go`, `tools_test.go`.
+- [x] **`Tool` type** (`tools.go`): `Name`, `Description`, `Parameters json.RawMessage`, and `Run func(args string) (string, error)`.
+  - `Run` is a field holding a function. Each tool stores its own (`Run: readFile`, no `()`), and the registry calls it with `t.Run(args)`.
+- [x] **`Registry`** (`tools.go`): the lookup from the name the model sends to the Go code that runs.
+  - `byName map[string]Tool` for lookup, plus an `order []Tool` slice so the tool list sent to the model is always in the same order (map order is random, which would break prompt caching).
+  - `NewRegistry(tools ...Tool) *Registry`: builds the map with `make` and fills both fields.
+  - `List() []Tool`: the "menu" the agent turns into `[]llm.ToolDef`.
+  - `Run(name, args string) (string, error)`: finds the tool by name and calls its `Run`; `unknown tool "x"` error otherwise.
+  - Each mode gets its own registry (B6), e.g. chat: `NewRegistry(ReadFile(), ListFiles())`.
+  - [x] `byName` / `order` are lowercase, so only `NewRegistry` can fill them.
+  - [x] A tool whose name is already registered is skipped (the first one wins).
+- [x] **`safePath(p string) (string, error)`** (`path.go`): see below. Splits `rel` on `filepath.Separator` and refuses a first part of `..` (so `..notes.txt` is still allowed). Error messages name the path and tell the model to use a path relative to the project root.
+- [x] **`tools_test.go`** (AI-written): table-driven `TestSafePath`, plus registry tests (`Run`, unknown tool, list order + duplicate skip, empty registry). Run with `go test ./internal/tools -v`.
+- [ ] **`readfile.go`** ← next: `ReadFile() Tool` + `readFile(args string) (string, error)`.
+- [ ] **`listfiles.go`**: `ListFiles() Tool` + `listFiles(args string) (string, error)`.
+- [ ] Add tests for both tools to `tools_test.go`.
+- [ ] **`tools` must not import `llm`.** `agent` converts tools to `[]llm.ToolDef` (a small loop). Same layering rule as before.
+- [ ] **`read_file` first**, then **`list_files`**.
+  - Each tool unmarshals its `Arguments` string into its own small args struct.
+  - Reject paths outside the working directory with `safePath`: `os.Getwd()` → `filepath.Abs(p)` → `filepath.Rel(root, abs)`; refuse `..` or anything starting with `..` + separator, and treat a `Rel` error (another drive on Windows) as outside.
+  - Truncate big output (e.g. 20 KB + "…truncated") so one file doesn't blow the context.
+  - Return errors; never `log.Fatal`.
+
+**Check:** calling `read_file` from a throwaway test with `{"path":"main.go"}` returns the file; `{"path":"../x"}` returns an error.
+
+#### Step B5. The agent loop (`agent/loop.go`)
+```
+messages = [system prompt, user input]
+for i := 0; i < maxIterations; i++ {
+    reply := send(messages, toolDefs)
+    append reply to messages                 // even when it has tool calls
+    if no tool calls: print reply.Content, return
+    for each call in reply.ToolCalls:
+        print "→ read_file(main.go)"
+        result, err := registry.Run(call.Function.Name, call.Function.Arguments)
+        if err: result = "error: " + err.Error()   // back to the model, not out of the turn
+        append {role: "tool", tool_call_id: call.ID, content: result}
+}
+return error "stopped after N steps"
+```
+- [ ] Write the loop with a max number of iterations.
+- [ ] Append the assistant message **with** its `tool_calls` before the tool results; otherwise the API rejects the tool messages.
+- [ ] Answer **every** call ID (the model can request several tools at once).
+- [ ] An unknown tool name becomes an error result, not a crash.
+- [ ] Print a short progress line per tool call.
+
+**Check:** chat mode, "what does main.go do?" prints `→ read_file(main.go)` and then a real answer.
+
+#### Step B6. Hook up the modes
+- [ ] **Chat** goes through the loop with the read-only registry (`read_file`, `list_files`).
+- [ ] **Router:** `classify` stays a plain call with no tools.
+- [ ] **Plan / edit** stay stubs until Milestone C, but will call the same loop with a different registry:
+  - plan: read-only, plus writing `PLAN.md`;
+  - edit: read, write and `run_command`.
+- [ ] Update the chat prompt to say it can read files.
+
+#### Step B7. Tools that change things, with confirmation
+- [ ] **`write_file`**, then **`run_command`** (with a timeout via `exec.CommandContext`).
+- [ ] **Ask before running them.** The CLI gives the agent a function, e.g. a `Confirm func(question string) bool` field on `Agent`, set in `startSession`.
+  - It must read from the **same `bufio.Scanner`** the REPL uses. A second reader on `os.Stdin` can swallow the next input line.
+- [ ] **On "no",** send a "user declined" tool result so the model can change course.
+
+**Check:** the third "Done when" item above.
+
+#### Later (after B works)
+- [ ] **Stop the agent printing directly:** pass an `io.Writer` or callbacks from the CLI (also needed for Step 6).
+- [ ] **Let the agent change its own mode** (e.g. a `switch_mode` tool) via `SetMode`. The REPL reads the mode for the prompt, so it stays in sync.
+- [ ] **Conversation history across turns:** keep `messages` on the `Agent` instead of rebuilding it each turn (Milestone C).
+
+#### Keeping context small
+Every request resends the full conversation; coding agents keep that cheap rather than avoiding it.
+- **Truncate tool output** and cap loop iterations (already in B4/B5).
+- **Only append to the end of the messages, and keep the system prompt and tool list identical between requests.** That lets providers cache the repeated prefix (prompt caching). On OpenRouter it's automatic for some providers; Anthropic models need `cache_control` markers; many free models don't cache.
+- **Compaction** once history spans turns: read `usage.prompt_tokens` from responses and summarise the conversation when it nears the model's limit.
+- **Read less:** line ranges for `read_file`, a grep-style `search` tool returning matching lines only.
+- **Subagents** (much later): a side task runs in its own conversation and only returns a summary.
 
 ### Milestone C: plan and edit modes — step 8
 - [ ] **Plan mode:** call the model with the planner prompt (read-only tools, so it can look at the repo), write the result to `PLAN.md`, and ask before overwriting an existing one.
@@ -217,10 +357,10 @@ The reply should appear as the model writes it, not all at once at the end.
 ```
 internal/
   cli/
-    root.go       rootCmd: RunE starts a session, persistent --mode flag, PersistentPreRunE loads keys
-    repl.go       session loop: prompt, read line, command vs message, call a.Handle, print errors
+    root.go       rootCmd: RunE startSession, persistent --mode flag, PersistentPreRunE loads keys
+    repl.go       runRepl: prompt, read line, command vs message, call a.Handle, print errors
     commands.go   slash commands: /mode, /chat /plan /edit /auto, /help, /exit
-    chat.go       `chat` subcommand: alias that starts the same session (optional, can live in root.go)
+    chatCli.go    `chat` subcommand: alias that starts the same session
     sayhello.go
   agent/
     agent.go      Agent struct + Handle (dispatch per message)
@@ -234,7 +374,7 @@ internal/
     llmChat.go    HTTP client, request/response types
   config/
     config.go     model, endpoint, LoadKeys
-  tools/          restored in Milestone B
+  tools/          built from scratch in Milestone B (Tool, Registry, read_file, list_files, write_file, run_command)
 ```
 
 **Rule of thumb:** `cli` reads input and shows output, `agent` decides what to do, `llm` does HTTP, `tools` touch the filesystem. If a `cli` file imports `llm` or `tools`, logic has leaked into the wrong layer.
