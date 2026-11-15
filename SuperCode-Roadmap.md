@@ -284,8 +284,9 @@ Files: `tools.go` (Tool + Registry), `path.go` (`safePath`), `readfile.go`, `lis
   - [x] A tool whose name is already registered is skipped (the first one wins).
 - [x] **`safePath(p string) (string, error)`** (`path.go`): see below. Splits `rel` on `filepath.Separator` and refuses a first part of `..` (so `..notes.txt` is still allowed). Error messages name the path and tell the model to use a path relative to the project root.
 - [x] **`tools_test.go`** (AI-written): table-driven `TestSafePath`, plus registry tests (`Run`, unknown tool, list order + duplicate skip, empty registry). Run with `go test ./internal/tools -v`.
-- [ ] **`readfile.go`** ← next: `ReadFile() Tool` + `readFile(args string) (string, error)`.
-- [ ] **`listfiles.go`**: `ListFiles() Tool` + `listFiles(args string) (string, error)`.
+- [x] **`readfile.go`**: `ReadFile() Tool` + `readFile(args string) (string, error)`: decode args → require `path` → `safePath` → `os.ReadFile` → truncate at `maxReadBytes` (20000) with a note.
+  - [x] `os.Stat` first and return `"%q is a directory; use list_files to see what's in it"` (Windows otherwise says "Incorrect function.").
+- [x] **`listfiles.go`** (AI-written): `ListFiles() Tool` + `listFiles(args string) (string, error)`. Path is optional (defaults to `.`; empty args `""` treated as `{}`), folders end with `/`, `.git` skipped, capped at `maxListEntries` (500) with "... and N more", `(empty directory)` when nothing is listed, and a file path returns "use read_file".
 - [ ] Add tests for both tools to `tools_test.go`.
 - [ ] **`tools` must not import `llm`.** `agent` converts tools to `[]llm.ToolDef` (a small loop). Same layering rule as before.
 - [ ] **`read_file` first**, then **`list_files`**.
