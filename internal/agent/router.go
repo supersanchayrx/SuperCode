@@ -6,13 +6,10 @@ import (
 )
 
 func classify(input string) Mode {
-	request, err := llm.BuildChatRequest(routerPrompt, input)
-
-	if err != nil {
-		return ModeChat
-	}
-
-	answer, err := llm.HandleRequest(request)
+	answer, err := llm.Complete(llm.TaskRouter, []llm.Message{
+		{Role: "system", Content: routerPrompt},
+		{Role: "user", Content: input},
+	}, nil)
 
 	if err != nil {
 		return ModeChat

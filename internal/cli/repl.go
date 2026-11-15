@@ -11,6 +11,15 @@ import (
 func runRepl(a *agent.Agent) {
 	scanner := bufio.NewScanner(os.Stdin)
 
+	a.Confirm = func(question string) bool {
+		fmt.Printf("%s [y/N] ", question)
+		if !scanner.Scan() {
+			return false
+		}
+		answer := strings.ToLower(strings.TrimSpace(scanner.Text()))
+		return answer == "y" || answer == "yes"
+	}
+
 	fmt.Println("Type a message, or /help for commands")
 
 	//actual repl loop

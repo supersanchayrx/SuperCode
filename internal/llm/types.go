@@ -44,5 +44,15 @@ type Choice struct {
 }
 
 type ChatResponse struct {
-	Choices []Choice `json:"choices"`
+	Choices []Choice   `json:"choices"`
+	Error   *ErrorInfo `json:"error,omitempty"`
+}
+
+type ErrorInfo struct {
+	Message  string          `json:"message"`
+	Code     json.RawMessage `json:"code"`
+	Metadata struct {
+		Headers      map[string]any `json:"headers"`
+		ProviderName string         `json:"provider_name"`
+	} `json:"metadata"`
 }

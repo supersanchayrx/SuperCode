@@ -9,7 +9,7 @@ This roadmap is intentionally minimal and built for an intermediate-level develo
 ## Tech Stack
 
 - **Language:** Go
-- **LLM:** OpenRouter chat completions API (currently `nvidia/nemotron-3.5-lightning:free`)
+- **LLM:** OpenRouter chat completions API: a model per task (`ORCHESTRATOR_MODEL`, `PLAN_MODEL`, `EDIT_MODEL` in `.env`), several API keys (`SUPERCODE_API_KEY1`…`N`), `openrouter/free` as the last fallback
 - **CLI:** `cobra` for commands and flags
 - **HTTP:** Standard library `net/http`
 - **Config:** `godotenv` for loading the API key from `.env`
@@ -66,8 +66,9 @@ Work top to bottom. Each step ends with a **Check** you can run, so you always k
 | 4 | ~~Errors that don't kill the session~~ ✅ | Needed before streaming, where a mid-answer failure would kill the REPL. |
 | 5 | Housekeeping, then commit (shelved for later) | Small cleanups; nothing else depends on them. |
 | 6 | Streaming chat replies (after Milestone B) | Tool calls arrive in pieces when streaming, so build tools without streaming first. |
-| 7 | Milestone B: tool calling ← **you are here** (B4) | The big one. |
-| 8 | Milestone C: plan and edit modes | Built on the tools from B. |
+| 7 | ~~Milestone B: tool calling~~ ✅ | The big one. |
+| 8 | ~~Milestone C: plan and edit modes~~ ✅ | Built on the tools from B. |
+| 9 | Housekeeping (Step 5), then streaming (Step 6) ← **you are here** | Everything core works; polish next. |
 
 ### Milestone A: a working session with modes (do this now)
 
@@ -207,9 +208,9 @@ The reply should appear as the model writes it, not all at once at the end.
 Built from scratch (not restored from `1ec8f52`). Streaming stays off (`Stream: false`) for the whole milestone.
 
 **Done when:**
-- [ ] In chat mode, "what does main.go do?" makes the model call `read_file`, and it answers about the real file.
-- [ ] A tool error (e.g. a missing file) goes back to the model, and the session keeps going.
-- [ ] "Create hello.txt with hi in it" asks before writing, writes on yes, and tells the model on no.
+- [x] In chat mode, "what does main.go do?" makes the model call `read_file`, and it answers about the real file.
+- [x] A tool error (e.g. a missing file) goes back to the model, and the session keeps going.
+- [x] "Create hello.txt with hi in it" asks before writing, writes on yes, and tells the model on no.
 
 #### How tool calling works
 1. You send the messages plus a list of **tool definitions** (name, description, JSON schema for the arguments).
@@ -270,76 +271,59 @@ Things to remember:
 
 **Check:** `go build ./...` passes, and chat still answers.
 
-#### Step B4. The `tools` package, one tool at a time ← you are here
-Files: `tools.go` (Tool + Registry), `path.go` (`safePath`), `readfile.go`, `listfiles.go`, `tools_test.go`.
-- [x] **`Tool` type** (`tools.go`): `Name`, `Description`, `Parameters json.RawMessage`, and `Run func(args string) (string, error)`.
+#### Step B4. The `tools` package ✅
+Files: `tools.go` (Tool + Registry), `path.go` (`safePath`), `readfile.go`, `listfiles.go`, `writefile.go`, `runcommand.go`, `shell_windows.go` / `shell_other.go`, `tools_test.go`.
+- [x] **`Tool` type** (`tools.go`): `Name`, `Description`, `Parameters json.RawMessage`, `Run func(args string) (string, error)`, and `NeedsApproval bool`.
   - `Run` is a field holding a function. Each tool stores its own (`Run: readFile`, no `()`), and the registry calls it with `t.Run(args)`.
+  - `NeedsApproval` marks tools that change things; the agent asks the user before running them (B7).
 - [x] **`Registry`** (`tools.go`): the lookup from the name the model sends to the Go code that runs.
   - `byName map[string]Tool` for lookup, plus an `order []Tool` slice so the tool list sent to the model is always in the same order (map order is random, which would break prompt caching).
-  - `NewRegistry(tools ...Tool) *Registry`: builds the map with `make` and fills both fields.
-  - `List() []Tool`: the "menu" the agent turns into `[]llm.ToolDef`.
-  - `Run(name, args string) (string, error)`: finds the tool by name and calls its `Run`; `unknown tool "x"` error otherwise.
-  - Each mode gets its own registry (B6), e.g. chat: `NewRegistry(ReadFile(), ListFiles())`.
-  - [x] `byName` / `order` are lowercase, so only `NewRegistry` can fill them.
-  - [x] A tool whose name is already registered is skipped (the first one wins).
-- [x] **`safePath(p string) (string, error)`** (`path.go`): see below. Splits `rel` on `filepath.Separator` and refuses a first part of `..` (so `..notes.txt` is still allowed). Error messages name the path and tell the model to use a path relative to the project root.
-- [x] **`tools_test.go`** (AI-written): table-driven `TestSafePath`, plus registry tests (`Run`, unknown tool, list order + duplicate skip, empty registry). Run with `go test ./internal/tools -v`.
-- [x] **`readfile.go`**: `ReadFile() Tool` + `readFile(args string) (string, error)`: decode args → require `path` → `safePath` → `os.ReadFile` → truncate at `maxReadBytes` (20000) with a note.
-  - [x] `os.Stat` first and return `"%q is a directory; use list_files to see what's in it"` (Windows otherwise says "Incorrect function.").
-- [x] **`listfiles.go`** (AI-written): `ListFiles() Tool` + `listFiles(args string) (string, error)`. Path is optional (defaults to `.`; empty args `""` treated as `{}`), folders end with `/`, `.git` skipped, capped at `maxListEntries` (500) with "... and N more", `(empty directory)` when nothing is listed, and a file path returns "use read_file".
-- [ ] Add tests for both tools to `tools_test.go`.
-- [ ] **`tools` must not import `llm`.** `agent` converts tools to `[]llm.ToolDef` (a small loop). Same layering rule as before.
-- [ ] **`read_file` first**, then **`list_files`**.
-  - Each tool unmarshals its `Arguments` string into its own small args struct.
-  - Reject paths outside the working directory with `safePath`: `os.Getwd()` → `filepath.Abs(p)` → `filepath.Rel(root, abs)`; refuse `..` or anything starting with `..` + separator, and treat a `Rel` error (another drive on Windows) as outside.
-  - Truncate big output (e.g. 20 KB + "…truncated") so one file doesn't blow the context.
-  - Return errors; never `log.Fatal`.
+  - `NewRegistry(tools ...Tool) *Registry`, `List() []Tool`, `Get(name) (Tool, bool)`, `Run(name, args) (string, error)`.
+  - `byName` / `order` are lowercase; a duplicate name is skipped (the first one wins).
+- [x] **`tools` doesn't import `llm`.** `agent` converts tools to `[]llm.ToolDef` (`toolDefs` in `loop.go`).
+- [x] **`safePath`** (`path.go`): `os.Getwd()` → `filepath.Abs` → `filepath.Rel`; refuses a first part of `..` (split on `filepath.Separator`, so `..notes.txt` is still allowed) and a `Rel` error (another drive). Errors name the path and tell the model to use a path relative to the project root.
+- [x] **`read_file`**: decode args → require `path` → `safePath` → `os.Stat` (a directory says "use list_files") → `os.ReadFile` → truncate at 20000 bytes with a note.
+- [x] **`list_files`** (AI-written): optional path (defaults to `.`; empty args `""` treated as `{}`), folders end with `/`, `.git` skipped, capped at 500 entries, `(empty directory)` when empty, a file path says "use read_file".
+- [x] **`tools_test.go`** (AI-written): `safePath`, the registry, all four tools (`write_file` runs in a temp folder via `t.Chdir(t.TempDir())`), and the approval flags. `go test ./internal/tools -v`.
+- [ ] Optional: turn "file not found" into a clean `%q does not exist` with `errors.Is(err, fs.ErrNotExist)` (Windows otherwise adds `GetFileAttributesEx …`).
 
-**Check:** calling `read_file` from a throwaway test with `{"path":"main.go"}` returns the file; `{"path":"../x"}` returns an error.
-
-#### Step B5. The agent loop (`agent/loop.go`)
+#### Step B5. The agent loop (`agent/loop.go`) ✅ (AI-written)
 ```
 messages = [system prompt, user input]
-for i := 0; i < maxIterations; i++ {
+for step := 0; step < maxSteps (20); step++ {
     reply := send(messages, toolDefs)
     append reply to messages                 // even when it has tool calls
     if no tool calls: print reply.Content, return
     for each call in reply.ToolCalls:
-        print "→ read_file(main.go)"
+        print "→ read_file(path=main.go)"
+        ask the user first if the tool NeedsApproval
         result, err := registry.Run(call.Function.Name, call.Function.Arguments)
         if err: result = "error: " + err.Error()   // back to the model, not out of the turn
         append {role: "tool", tool_call_id: call.ID, content: result}
 }
-return error "stopped after N steps"
+return error "stopped after 20 steps without a final answer"
 ```
-- [ ] Write the loop with a max number of iterations.
-- [ ] Append the assistant message **with** its `tool_calls` before the tool results; otherwise the API rejects the tool messages.
-- [ ] Answer **every** call ID (the model can request several tools at once).
-- [ ] An unknown tool name becomes an error result, not a crash.
-- [ ] Print a short progress line per tool call.
+- [x] `runLoop(systemPrompt, input, reg)`: the loop above, used by every mode handler.
+- [x] The assistant message is appended **with** its `tool_calls` before the tool results, and **every** call ID gets a result.
+- [x] Unknown tool names and tool errors become `error: …` results, so the model can adjust.
+- [x] Progress output: `→ name(key=value, …)` from `describeCall` (values shortened to 60 characters), then the first line of the result or the error.
+- [x] Text the model sends alongside tool calls ("Let me look at…") is printed too.
 
-**Check:** chat mode, "what does main.go do?" prints `→ read_file(main.go)` and then a real answer.
+#### Step B6. Hook up the modes ✅
+- [x] **Registries are built in `agent.New`:** `chatTools` = `read_file`, `list_files`; `editTools` = those plus `write_file`, `run_command`.
+- [x] **Chat** (`chat.go`): `runLoop(chatPrompt, input, a.chatTools)`. The chat prompt now says it can look at files with read-only tools.
+- [x] **Edit** (`edit.go`): `runLoop(editPrompt, input, a.editTools)`, with a new `editPrompt` (read before changing, `write_file` replaces whole files, stop if the user declines, short summary at the end). Basic version; Milestone C adds `edit_file` and diffs.
+- [x] **Router:** `classify` stays a plain call with no tools.
+- [ ] **Plan** stays a stub until Milestone C.
 
-#### Step B6. Hook up the modes
-- [ ] **Chat** goes through the loop with the read-only registry (`read_file`, `list_files`).
-- [ ] **Router:** `classify` stays a plain call with no tools.
-- [ ] **Plan / edit** stay stubs until Milestone C, but will call the same loop with a different registry:
-  - plan: read-only, plus writing `PLAN.md`;
-  - edit: read, write and `run_command`.
-- [ ] Update the chat prompt to say it can read files.
+#### Step B7. Tools that change things, with confirmation ✅
+- [x] **`write_file`** (`writefile.go`): `path` + `content` (a `*string`, so an empty file is allowed but a missing `content` is an error); `safePath`; refuses a directory; creates missing folders; reports `created` / `overwrote` and the size. `NeedsApproval: true`.
+- [x] **`run_command`** (`runcommand.go`): runs in the project root, combined stdout + stderr, `[exit code N]` at the end (a non-zero exit is a normal result, not an error), 60 s timeout via `exec.CommandContext` + `WaitDelay`, output truncated at 20000 bytes, no stdin. `NeedsApproval: true`.
+  - The shell is chosen at build time: `shell_windows.go` runs `cmd /C` and passes the command line as is (`SysProcAttr.CmdLine`, because Go's normal argument quoting breaks `cmd.exe`); `shell_other.go` (`//go:build !windows`) runs `sh -c`.
+- [x] **Confirmation:** `Agent.Confirm func(question string) bool`, set in `runRepl` and reading from the **same `bufio.Scanner`** as the REPL. `[y/N]`: only `y` / `yes` approve; with no `Confirm` set, everything is declined.
+- [x] **On "no",** the model gets "The user declined this action. Do not retry it; ask the user what they want instead."
 
-#### Step B7. Tools that change things, with confirmation
-- [ ] **`write_file`**, then **`run_command`** (with a timeout via `exec.CommandContext`).
-- [ ] **Ask before running them.** The CLI gives the agent a function, e.g. a `Confirm func(question string) bool` field on `Agent`, set in `startSession`.
-  - It must read from the **same `bufio.Scanner`** the REPL uses. A second reader on `os.Stdin` can swallow the next input line.
-- [ ] **On "no",** send a "user declined" tool result so the model can change course.
-
-**Check:** the third "Done when" item above.
-
-#### Later (after B works)
-- [ ] **Stop the agent printing directly:** pass an `io.Writer` or callbacks from the CLI (also needed for Step 6).
-- [ ] **Let the agent change its own mode** (e.g. a `switch_mode` tool) via `SetMode`. The REPL reads the mode for the prompt, so it stays in sync.
-- [ ] **Conversation history across turns:** keep `messages` on the `Agent` instead of rebuilding it each turn (Milestone C).
+**Checked live:** chat reads `main.go` and answers about it; a missing file goes back to the model; edit mode creates a file on `y`, doesn't on `n` and the model asks what to do instead; `run_command` runs `go version`; auto mode routes to chat and uses `list_files`.
 
 #### Keeping context small
 Every request resends the full conversation; coding agents keep that cheap rather than avoiding it.
@@ -349,33 +333,95 @@ Every request resends the full conversation; coding agents keep that cheap rathe
 - **Read less:** line ranges for `read_file`, a grep-style `search` tool returning matching lines only.
 - **Subagents** (much later): a side task runs in its own conversation and only returns a summary.
 
-### Milestone C: plan and edit modes — step 8
-- [ ] **Plan mode:** call the model with the planner prompt (read-only tools, so it can look at the repo), write the result to `PLAN.md`, and ask before overwriting an existing one.
-- [ ] **Edit mode:** an `edit_file` tool that does find-and-replace (see Phase 3), shows what will change, and asks before writing.
-- [ ] **Conversation history across messages** on the `Agent` (a `[]Message`), plus a `/clear` command to reset it.
+### Milestone C: plan and edit modes — step 8 ✅ (AI-written)
 
-### Target structure after Milestone A
+**Done when:**
+- [x] Plan mode looks at the repo, prints a plan, saves it to `PLAN.md`, and asks before overwriting an existing one.
+- [x] Edit mode changes part of a file with `edit_file`, showing a diff before you approve.
+- [x] The agent remembers earlier messages in the session, and `/clear` makes it forget.
+
+#### C1. Approval previews (diffs)
+- [x] **`Tool.Preview func(args string) (string, error)`**: optional; tools that need approval use it to show what will happen. The agent prints the preview, then asks `Allow <tool>? [y/N]`.
+  - If the preview itself fails (e.g. `old_text` not found), the error goes straight back to the model and you're never asked.
+- [x] **`diffPreview(before, after)`** (`tools/diff.go`): finds the first and last lines that differ (common prefix / suffix), and shows that one block as `-` / `+` lines with 2 lines of context and a `@@ line N: -x +y @@` header, capped at 40 lines. Not a full diff algorithm: several separate changes in one file show as one bigger block.
+- [x] Previews: `edit_file` and `write_file` show a diff (`(new file)` for a new one); `run_command` shows `$ <full command>`.
+
+#### C2. `edit_file` (`tools/editfile.go`)
+- [x] Args: `path`, `old_text`, `new_text`. `old_text` must appear **exactly once**: 0 matches → "read the file again and copy the exact text"; 2+ → "include more surrounding lines". Empty `old_text` → "use write_file".
+- [x] `planEdit` does all the checks and builds the new contents in memory; `Run` writes it, `Preview` diffs it, so both always agree.
+- [x] **CRLF files:** if the file uses Windows line endings, `old_text` / `new_text` are converted to `\r\n` first, because the model always sends `\n`.
+- [x] `write_file` refactored: `SaveFile(path, content)` and `FileExists(path)` are exported, so plan mode can save `PLAN.md` through `tools` (and `safePath`).
+
+#### C3. Plan mode (`agent/plan.go`)
+- [x] `runLoop(planPrompt, input, a.chatTools)`: read-only tools, so it can look but not touch. `runLoop` now returns the final text as well.
+- [x] The final reply is the plan: saved with `tools.SaveFile("PLAN.md", …)`; if `PLAN.md` exists, asks `PLAN.md already exists. Overwrite it? [y/N]` first. An empty plan is an error.
+- [x] `planPrompt`: read-only, no saving tool (SuperCode saves the reply), plan format (goal, numbered steps with files, "How to check", "Assumptions").
+- [x] `editPrompt` now mentions `edit_file` (preferred for existing files) and reading `PLAN.md` when the user refers to "the plan".
+
+#### C4. Conversation history (`agent/history.go`)
+- [x] `Agent.history []llm.Message`: every message except the system prompt (user, assistant, tool calls, tool results). Shared by all modes, so "plan X" → `/edit` → "do the plan" works.
+- [x] `runLoop` sends `[system prompt for this mode] + history + new user message`, and saves the history only when the turn finishes; a failed turn (API error, step limit) is forgotten, so history never has a half-finished tool exchange.
+- [x] **Size limit:** above `maxHistoryChars` (120000 characters), the oldest **whole turns** are dropped (from one user message to the next), so a tool call is never separated from its result. The latest turn is always kept.
+- [x] **`/clear`** (`cli/commands.go`): `a.ClearHistory()`, prints how many of your messages were forgotten. Listed in `/help`.
+- [x] `agent/agent_test.go`: history trimming, `/clear`, `describeCall`, tool order.
+
+**Checked live:** chat remembered "teal" across messages and forgot it after `/clear`; plan mode wrote `PLAN.md` and kept it when the overwrite was declined; the 429 rate-limit error printed and the session continued.
+
+#### Later
+- [ ] **Stop the agent printing directly:** pass an `io.Writer` or callbacks from the CLI (also needed for Step 6).
+- [ ] **Compaction instead of dropping:** summarise old turns with the model rather than deleting them.
+- [ ] **A real diff** (e.g. Myers / LCS) when one edit changes several far-apart places.
+- [ ] **Let the agent change its own mode** (e.g. a `switch_mode` tool) via `SetMode`.
+- [ ] **Unit tests for `runLoop`** with a fake LLM (would need `llm` behind an interface or a function field).
+- [ ] **Free-tier rate limit** (20 requests/min): a long tool loop can hit 429. Retry with a short wait, or switch models.
+
+### Multiple API keys and models per task ✅ (AI-written)
+**`.env`:** `SUPERCODE_API_KEY1` … `SUPERCODE_API_KEYN` (any number, plain `SUPERCODE_API_KEY` also works; duplicates and empty values are skipped), plus `ORCHESTRATOR_MODEL`, `PLAN_MODEL`, `EDIT_MODEL` (each defaults to the orchestrator model, which defaults to `nvidia/nemotron-3.5-lightning:free`).
+
+- [x] **`config`:** `APIKeys []string` (sorted by number), `OrchestratorModel`, `PlanModel`, `EditModel`, `FallbackModel = "openrouter/free"`. `LoadKeys` returns `([]string, error)`.
+- [x] **One entry point, `llm.Complete(task, messages, tools)`** (`llm/pool.go`). Tasks: `TaskRouter`, `TaskChat` → orchestrator model; `TaskPlan` → plan model; `TaskEdit` → edit model.
+- [x] **Model chain per task:** its own model → the other two configured models → `openrouter/free`. A model that fails is skipped for a while: 30 min for 404 (doesn't exist), 2 min for 5xx or a provider-side 429; 400 and network errors just move on.
+- [x] **Key choice:** the usable key with the **fewest requests in the last minute** (ties: least recently used), so the 4 keys share the load evenly. A key with 20 requests in the last minute is rested before OpenRouter's free limit is hit.
+- [x] **Key errors:** 429 from OpenRouter (account limit) → that key rests until the reset time OpenRouter sends (`X-RateLimit-Reset`), and the next key is tried on the same model; 401/402/403 → the key is disabled for the session.
+- [x] **All keys resting:** waits up to 90 s for the first one to come back (not for the router, which just falls back to chat), otherwise returns `all models and API keys failed, last error: …`.
+- [x] **`APIError`** (`llm/llmChat.go`) keeps the status, OpenRouter's message, whether it came from the upstream provider, and the retry time. A 200 response that carries an `error` object is treated as a failure too. HTTP timeout: 3 minutes.
+- [x] **Progress messages** go through `llm.Notify` (set by `agent.New`), e.g. `(key 1 is rate-limited for 2h46m; switching key)`, `(plan model failed: …; trying …)`, `(answered by openrouter/free)`.
+- [x] **`/status`** shows the model for each task and every key's state (masked to its last 4 characters).
+- [x] Tests: `llm/pool_test.go` (fake OpenRouter server: rotation, 429 → next key, 401 → disabled, broken models → backup and skipped next time, upstream 429, router doesn't wait, per-minute budget, reset parsing), `config/config_test.go` (key collection).
+
+### Current structure (after Milestone C)
 ```
 internal/
   cli/
     root.go       rootCmd: RunE startSession, persistent --mode flag, PersistentPreRunE loads keys
-    repl.go       runRepl: prompt, read line, command vs message, call a.Handle, print errors
-    commands.go   slash commands: /mode, /chat /plan /edit /auto, /help, /exit
+    repl.go       runRepl: prompt, read line, command vs message, call a.Handle, print errors; sets a.Confirm
+    commands.go   slash commands: /mode, /chat /plan /edit /auto, /clear, /help, /exit
     chatCli.go    `chat` subcommand: alias that starts the same session
     sayhello.go
   agent/
-    agent.go      Agent struct + Handle (dispatch per message)
-    mode.go       Mode type + ParseMode
+    agent.go      Agent struct (Mode, Confirm, tool registries, history) + New + Handle (dispatch per message)
+    mode.go       Mode type + ParseMode + SetMode
     router.go     classify (auto mode)
-    prompts.go    every system prompt
-    chat.go       chat mode handler
-    plan.go       plan mode handler (stub)
-    edit.go       edit mode handler (stub)
+    prompts.go    every system prompt (router, chat, plan, edit)
+    loop.go       runLoop (the agent loop), runTool (preview + approval), toolDefs, progress labels
+    history.go    history, saveHistory (size limit), ClearHistory
+    agent_test.go
+    chat.go       chat mode: runLoop with read-only tools
+    plan.go       plan mode: runLoop with read-only tools, save the reply to PLAN.md
+    edit.go       edit mode: runLoop with read, edit_file, write_file and run_command
   llm/
-    llmChat.go    HTTP client, request/response types
+    llmChat.go    BuildRequest, send (one attempt), ParseResponse, APIError
+    pool.go       Complete: model per task, key rotation, fallback, Status
+    types.go      Message, ToolCall, ToolDef, ChatRequest, ChatResponse
   config/
-    config.go     model, endpoint, LoadKeys
-  tools/          built from scratch in Milestone B (Tool, Registry, read_file, list_files, write_file, run_command)
+    config.go     endpoint, models per task, API keys, LoadKeys
+  tools/
+    tools.go      Tool + Registry
+    path.go       safePath
+    readfile.go, listfiles.go, editfile.go, writefile.go (+ SaveFile, FileExists), runcommand.go
+    diff.go       diffPreview for approval previews
+    shell_windows.go, shell_other.go   how run_command starts a shell
+    tools_test.go
 ```
 
 **Rule of thumb:** `cli` reads input and shows output, `agent` decides what to do, `llm` does HTTP, `tools` touch the filesystem. If a `cli` file imports `llm` or `tools`, logic has leaked into the wrong layer.
@@ -507,25 +553,25 @@ Total: roughly **1 week** of focused work for an intermediate developer.
 ### Foundation
 - [x] CLI interface
 - [ ] Working directory support
-- [ ] Chat history
-- [ ] Tool framework
+- [x] Chat history
+- [x] Tool framework
 
 ### Tools
-- [ ] read_file
+- [x] read_file
 - [ ] search
-- [ ] list_files
-- [ ] write_file
-- [ ] execute
+- [x] list_files
+- [x] write_file
+- [x] execute
 - [ ] finish
 
 ### Agent
 - [x] LLM API integration (OpenRouter, OpenAI-compatible)
-- [ ] Structured JSON tool calls
-- [ ] Agent execution loop
-- [ ] Tool result feedback
+- [x] Structured JSON tool calls
+- [x] Agent execution loop
+- [x] Tool result feedback
 
 ### Upgrades
-- [ ] apply_patch
+- [x] apply_patch (as `edit_file` find-and-replace)
 - [ ] Automatic build verification
 - [ ] Repository tree context
 

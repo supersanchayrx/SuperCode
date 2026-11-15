@@ -10,6 +10,8 @@ const helpText = `Commands:
   /mode <name>   switch mode (auto, chat, plan, edit)
   /mode          show the current mode
   /auto /chat /plan /edit   shortcuts for /mode <name>
+  /clear         forget the conversation so far
+  /status        show which models and API keys are in use
   /help          show this help
   /exit, /quit   end the session`
 
@@ -26,6 +28,14 @@ func handleCommand(a *agent.Agent, input string) bool {
 		return true
 	case "/help":
 		fmt.Println(helpText)
+	case "/status":
+		for _, line := range a.Status() {
+			fmt.Println(line)
+		}
+	case "/clear":
+		turns := a.HistoryTurns()
+		a.ClearHistory()
+		fmt.Printf("Conversation cleared (%d messages forgotten)\n", turns)
 	case "/mode":
 		{
 			if len(args) == 0 {

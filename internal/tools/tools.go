@@ -6,10 +6,12 @@ import (
 )
 
 type Tool struct {
-	Name        string
-	Description string
-	Parameters  json.RawMessage
-	Run         func(args string) (string, error)
+	Name          string
+	Description   string
+	Parameters    json.RawMessage
+	Run           func(args string) (string, error)
+	NeedsApproval bool
+	Preview       func(args string) (string, error)
 }
 
 type Registry struct {
@@ -39,6 +41,11 @@ func NewRegistry(tools ...Tool) *Registry {
 
 func (r *Registry) List() []Tool {
 	return r.order
+}
+
+func (r *Registry) Get(name string) (Tool, bool) {
+	t, ok := r.byName[name]
+	return t, ok
 }
 
 func (r *Registry) Run(name, args string) (string, error) {

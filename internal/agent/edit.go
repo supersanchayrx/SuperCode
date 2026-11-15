@@ -1,9 +1,8 @@
 package agent
 
-import "fmt"
+import "supercode/internal/llm"
 
 func (a *Agent) Edit(input string) error {
-
-	fmt.Println("Not built yet")
-	return nil
+	_, err := a.runLoop(llm.TaskEdit, editPrompt, input, a.editTools)
+	return err
 }

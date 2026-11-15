@@ -1,9 +1,17 @@
 package agent
 
-import "fmt"
+import (
+	"fmt"
+	"supercode/internal/llm"
+	"supercode/internal/tools"
+)
 
 type Agent struct {
-	Mode Mode
+	Mode      Mode
+	Confirm   func(question string) bool
+	chatTools *tools.Registry
+	editTools *tools.Registry
+	history   []llm.Message
 }
 
 func New(mode string) (*Agent, error) {
@@ -13,7 +21,15 @@ func New(mode string) (*Agent, error) {
 		return nil, err
 	}
 
-	return &Agent{Mode: startMode}, nil
+	llm.Notify = func(message string) {
+		fmt.Println(message)
+	}
+
+	return &Agent{
+		Mode:      startMode,
+		chatTools: tools.NewRegistry(tools.ReadFile(), tools.ListFiles()),
+		editTools: tools.NewRegistry(tools.ReadFile(), tools.ListFiles(), tools.EditFile(), tools.WriteFile(), tools.RunCommand()),
+	}, nil
 }
 
 func (a *Agent) Handle(input string) error {
@@ -31,4 +47,8 @@ func (a *Agent) Handle(input string) error {
 	default:
 		return a.Chat(input)
 	}
+}
+
+func (a *Agent) Status() []string {
+	return llm.Status()
 }
