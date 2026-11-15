@@ -1,33 +1,32 @@
 package config
 
-import "os"
+import (
+	"log"
+	"os"
 
-// Config holds all configuration for SuperCode.
-type Config struct {
-	APIKey  string
-	Model   string
-	BaseURL string
-	Stream  bool
-}
+	"github.com/joho/godotenv"
+)
 
-// Load reads configuration from environment variables.
-func Load() Config {
-	model := os.Getenv("SUPERCODE_MODEL")
-	if model == "" {
-		model = "nvidia/nemotron-3-nano-30b-a3b:free"
+var SuperCodeApiKey = ""
+
+const ModelID = "nvidia/nemotron-3.5-lightning:free"
+const EndPoint = "https://openrouter.ai/api/v1/chat/completions"
+const envFilePath = "internal/config/.env"
+
+func LoadKeys() (error, string) {
+
+	err := godotenv.Load(envFilePath)
+
+	if err != nil {
+		log.Fatal("Error Reading keys check the .env file")
+		return err, SuperCodeApiKey
 	}
 
-	baseurl := os.Getenv("SUPERCODE_BASE_URL")
-	if baseurl == "" {
-		baseurl = "https://openrouter.ai/api/v1"
+	SuperCodeApiKey = os.Getenv("SUPERCODE_API_KEY")
+
+	if SuperCodeApiKey == "" {
+		log.Fatal("The Key is empty enter a valid key")
 	}
 
-	var streamMode bool = true
-
-	return Config{
-		APIKey:  os.Getenv("SUPERCODE_API_KEY"),
-		Model:   model,
-		BaseURL: baseurl,
-		Stream:  streamMode,
-	}
+	return err, SuperCodeApiKey
 }
